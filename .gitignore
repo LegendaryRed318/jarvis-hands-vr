@@ -1,0 +1,14 @@
+# Allow-list: only the app goes public. PLAN.md and CHANGELOG.md stay on the laptop.
+*
+!.gitignore
+!.nojekyll
+!index.html
+!models.json
+!package.json
+!README.md
+!js/
+!js/*.js
+!tests/
+!tests/*.mjs
+!tests/scenario.js
+!tests/run_scenario.py
