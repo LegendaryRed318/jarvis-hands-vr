@@ -4,23 +4,26 @@ The JARVIS Hands holograms on a phone in a cheap VR headset (front cover off, so
 camera can see). A single web page: three.js for the holograms, MediaPipe Tasks Vision for the
 hands, both from jsDelivr; the hand model from Google's model store. No build step.
 
-- `index.html`: the start page and settings
-- `js/app.js`: camera, hand tracking, two-eye drawing, head turning, the moves and the menu
+- `index.html`: the start page and settings (camera picker, a video for the screen, install)
+- `js/app.js`: camera, two-eye drawing, head turning, the moves, the menu and the video screen
+- `js/tracker.js`: the hand tracker in its own thread (a classic worker), so drawing never waits
 - `js/logic.js`: everything without a browser in it (hand reading, pinch, following hands,
-  camera maths, the ring menu, model checking)
+  smoothing, aiming, head-turn timing, camera maths, the ring menu, model checking)
+- `manifest.webmanifest`, `sw.js`, `icons/`: it installs as an app and works offline after one visit
 - `models.json`: the 17 models, exported from JARVIS Hands (`hands.py` built-ins and
   `hand_maker.py` recipes)
-- `PLAN.md`: what to do, what works, what is next
 
 ## Checks
 
 ```
-npm test                                  # 9 checks of js/logic.js (Node 22)
-python tests/run_scenario.py              # 14 checks of the real page, see the file for setup
+npm test                                  # 17 checks of js/logic.js (Node 22)
+python tests/run_scenario.py              # 25 checks of the real page, see the file for setup
 ```
 
-`run_scenario.py` drives the real page in headless Edge (fake camera, SwiftShader WebGL) and
-feeds it made-up hands through the `?test=1` hook (`window.__jh.feed`).
+`run_scenario.py` drives the real page in headless Edge (a photo of hands as the fake camera,
+SwiftShader WebGL): first the real tracker on the camera, then made-up hands through the
+`?test=1` hook (`window.__jh.feed`). `?mainthread` runs the tracker the old way; `?nosw` skips
+the offline copy.
 
 ## Privacy
 

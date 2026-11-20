@@ -107,3 +107,95 @@ test('every model in models.json is clean and complete', () => {
   assert.ok(models.some((m) => m.name === 'GAUNTLET'));
   assert.throws(() => L.cleanModel({name: 'x', parts: [{v: [[NaN, 0, 0]], e: []}]}));
 });
+
+// ---------------------------------------------------------------- second version (21 Nov 2026)
+// A repeatable shake, so the checks give the same answer every run.
+function shaker(seed = 7) {
+  let s = seed;
+  return () => { s = (s * 16807) % 2147483647; return s / 2147483647 - 0.5; };
+}
+const spread = (xs) => { const m = xs.reduce((a, b) => a + b, 0) / xs.length; return Math.sqrt(xs.reduce((a, b) => a + (b - m) ** 2, 0) / xs.length); };
+
+test('a still hand that shakes by a few pixels is drawn steady (less than half the shake)', () => {
+  const rnd = shaker(), sm = new L.HandSmoother(), raw = [], out = [];
+  const base = hand({});
+  for (let i = 0; i < 120; i++) {
+    const pts = base.map(([x, y]) => [x + rnd() * 0.008, y + rnd() * 0.008]);
+    const got = sm.step(pts, 1 / 30);
+    if (i > 30) { raw.push(pts[8][0]); out.push(got[8][0]); }
+  }
+  assert.ok(spread(out) < 0.5 * spread(raw), `raw ${spread(raw).toFixed(5)} smoothed ${spread(out).toFixed(5)}`);
+});
+
+test('a fast hand is followed closely (smoothing lets go when it moves)', () => {
+  const sm = new L.HandSmoother();
+  let lagFast = 0;
+  for (let i = 0; i < 30; i++) {                     // a full picture width a second
+    const pts = hand({}, 0.2 + i / 30);
+    lagFast = Math.abs(sm.step(pts, 1 / 30)[9][0] - pts[9][0]);
+  }
+  const plain = new L.OneEuro(L.SMOOTH_MIN_CUTOFF, 0, 1);   // the same smoothing with no let-go
+  let lagPlain = 0;
+  for (let i = 0; i < 30; i++) { const x = 0.2 + i / 30; lagPlain = Math.abs(plain.filter(x, 1 / 30) - x); }
+  assert.ok(lagFast < 0.03, `fast hand trails by ${lagFast.toFixed(3)} of the picture`);
+  assert.ok(lagFast < lagPlain / 2, `${lagFast} vs ${lagPlain}`);
+});
+
+test('the depth guess is smoothed: a shaking size gives a steady distance', () => {
+  const rnd = shaker(3), f = new L.OneEuro(0.7, 2.5, 1), raw = [], out = [];
+  for (let i = 0; i < 120; i++) {
+    const d = L.handDepth(hand({}, 0.5, 0.7, 0.12 * (1 + rnd() * 0.12)), 70, 16 / 9);
+    const got = f.filter(d, 1 / 30);
+    if (i > 30) { raw.push(d); out.push(got); }
+  }
+  assert.ok(spread(out) < 0.4 * spread(raw), `raw ${spread(raw).toFixed(4)} smoothed ${spread(out).toFixed(4)}`);
+});
+
+test('camera width is the long side, so a phone held upright reads the same hand as the same distance', () => {
+  // The same real hand: in a landscape picture (16:9) and in the upright one (9:16) from the same camera.
+  const wide = L.handDepth(hand({}, 0.5, 0.7, 0.12, 16 / 9), 70, 16 / 9);
+  const upright = hand({}, 0.5, 0.7, 0.12 * 9 / 16, 9 / 16);   // same pixels, the picture is now taller
+  const tall = L.handDepth(upright, 70, 9 / 16);
+  assert.ok(Math.abs(tall / wide - 1) < 0.02, `landscape ${wide.toFixed(3)} m, upright ${tall.toFixed(3)} m`);
+  assert.deepEqual(L.tans(70, 16 / 9).map((x) => +x.toFixed(4)), L.tans(70, 9 / 16).slice().reverse().map((x) => +x.toFixed(4)));
+});
+
+test('you grab what your fingers are in front of, even when the distance guess is badly off', () => {
+  const model = { centre: [0, 0, -0.45], radius: 0.11 };
+  const other = { centre: [0.3, 0, -0.45], radius: 0.11 };
+  // Fingers straight in front of the model, guessed at 0.75 m (the old 3D test needed 0.15 m):
+  assert.equal(L.pickByRay([0.01, 0.0, -0.75], [model, other]), 0);
+  assert.equal(L.pickByRay([0.3, 0.0, -0.45], [model, other]), 1);
+  assert.equal(L.pickByRay([-0.4, 0.3, -0.45], [model, other]), -1, 'empty air');
+  // A big thing just beside and behind your head: never grabbed.
+  assert.equal(L.pickByRay([0, 0, -1], [{ centre: [0.1, 0, 0.02], radius: 0.3 }]), -1, 'nothing behind you');
+  // Two in line: the nearer one.
+  assert.equal(L.pickByRay([0, 0, -1], [{ centre: [0, 0, -1.2], radius: 0.25 }, model]), 1);
+});
+
+test('a line through the fingers meets the menu face where you see it', () => {
+  const hit = L.rayPlane([0, 0, 0], [0.1, 0, -1], [0, 0, -0.5], [0, 0, 1]);
+  assert.deepEqual(hit.map((x) => +x.toFixed(4)), [0.05, 0, -0.5]);
+  assert.equal(L.rayPlane([0, 0, 0], [0, 0, 1], [0, 0, -0.5], [0, 0, 1]), null, 'pointing away');
+});
+
+test('head turn readings are blended for the moment the picture was taken', () => {
+  const log = new L.OrientationLog(1000);
+  const yaw = (deg) => [0, Math.sin((deg * Math.PI) / 360), 0, Math.cos((deg * Math.PI) / 360)];
+  log.add(1000, yaw(0));
+  log.add(1100, yaw(20));
+  const mid = log.at(1050);
+  const deg = (2 * Math.atan2(mid[1], mid[3]) * 180) / Math.PI;
+  assert.ok(Math.abs(deg - 10) < 0.01, `${deg}`);
+  assert.deepEqual(log.at(900), yaw(0), 'before the first: the first');
+  assert.deepEqual(log.at(5000), yaw(20), 'after the last: the last');
+  log.add(1050, yaw(90));
+  assert.equal(log.size, 2, 'a reading from the past is ignored');
+});
+
+test('the picture behind each eye slides the opposite way, and not at all for one picture', () => {
+  const f = 1400, s = (side) => L.pictureShift(side, f, 0.03, 0.5);
+  assert.ok(s(-1) > 0 && s(1) < 0, 'left eye: right; right eye: left');
+  assert.ok(Math.abs(s(-1) - 42) < 0.01, `${s(-1)} px`);
+  assert.equal(s(0), 0);
+});

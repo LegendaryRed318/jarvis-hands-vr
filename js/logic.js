@@ -119,11 +119,18 @@ export function isStill(track, secs = 0.4, limit = 0.03) {
   return Math.max(...xs) - Math.min(...xs) < limit && Math.max(...ys) - Math.min(...ys) < limit;
 }
 
+// How wide and tall the camera sees, as tangents of half its angles. The "camera width" setting
+// is the angle across the picture's LONG side, so it stays right when the phone is held upright
+// (the picture then comes portrait and the long side is the height).
+export function tans(fovDeg, aspect) {
+  const t = Math.tan((fovDeg * Math.PI) / 360);
+  return aspect >= 1 ? [t, t / aspect] : [t * aspect, t];
+}
+
 // A point in the camera picture (0..1) as a direction from the camera, in "tangent" units at
 // depth 1 (x right, y up, looking down -z), for a camera of the given field of view (degrees).
-export function pictureToRay(u, v, hfovDeg, aspect) {
-  const tx = Math.tan((hfovDeg * Math.PI) / 360);
-  const ty = tx / aspect;
+export function pictureToRay(u, v, fovDeg, aspect) {
+  const [tx, ty] = tans(fovDeg, aspect);
   return [(u - 0.5) * 2 * tx, (0.5 - v) * 2 * ty, -1];
 }
 
@@ -181,4 +188,124 @@ export function cleanModel(m) {
   }
   if (!parts.length) throw new Error('no parts');
   return { name: m.name.slice(0, 24), parts };
+}
+
+// ---------------------------------------------------------------- smoothing (21 Nov 2026)
+// The tracker's points shake by a few pixels every picture, and the depth guess (from how big
+// the hand looks) shakes much more. A "one euro" filter smooths hard while the hand is still
+// (no shake) and lightly while it moves fast (no lag), like the laptop app's cursor.
+const alpha = (dt, cutoff) => 1 / (1 + 1 / (2 * Math.PI * cutoff * Math.max(dt, 1e-4)));
+
+export class OneEuro {
+  constructor(minCutoff = 1, beta = 1, dCutoff = 1) {
+    Object.assign(this, { minCutoff, beta, dCutoff, x: null, dx: 0 });
+  }
+  reset() { this.x = null; this.dx = 0; }
+  filter(x, dt) {
+    if (this.x === null || !Number.isFinite(this.x)) { this.x = x; this.dx = 0; return x; }
+    this.dx += alpha(dt, this.dCutoff) * ((x - this.x) / Math.max(dt, 1e-4) - this.dx);
+    this.x += alpha(dt, this.minCutoff + this.beta * Math.abs(this.dx)) * (x - this.x);
+    return this.x;
+  }
+}
+
+// The whole hand at once: one speed (the palm's), one blend for all 21 points, so the hand keeps
+// its shape. Speeds are in picture widths a second; a quick hand moves about 1.
+export const SMOOTH_MIN_CUTOFF = 1.6;     // Hz while still
+export const SMOOTH_BETA = 9;             // how fast the smoothing lets go as the hand speeds up
+export class HandSmoother {
+  constructor() { this.pts = null; this.speed = 0; }
+  reset() { this.pts = null; this.speed = 0; }
+  step(pts, dt) {
+    if (!this.pts) { this.pts = pts.map((p) => [p[0], p[1]]); return this.pts; }
+    const c = centre(pts), c0 = centre(this.pts);
+    const v = Math.hypot(c[0] - c0[0], c[1] - c0[1]) / Math.max(dt, 1e-4);
+    this.speed += alpha(dt, 1) * (v - this.speed);
+    const a = alpha(dt, SMOOTH_MIN_CUTOFF + SMOOTH_BETA * this.speed);
+    this.pts = this.pts.map((q, i) => [q[0] + a * (pts[i][0] - q[0]), q[1] + a * (pts[i][1] - q[1])]);
+    return this.pts;
+  }
+}
+const centre = (pts) => [0, 5, 9, 13, 17].reduce((s, i) => [s[0] + pts[i][0] / 5, s[1] + pts[i][1] / 5], [0, 0]);
+
+// ---------------------------------------------------------------- head turning in time
+// The camera picture on screen is always a little old (the camera takes time). The holograms
+// must be turned by where the head was when THAT picture was taken, or they slide over the room
+// whenever the head moves. So every turn reading is kept for a second, with its time.
+export function slerp(a, b, k) {
+  let [ax, ay, az, aw] = a;
+  let [bx, by, bz, bw] = b;
+  let cos = ax * bx + ay * by + az * bz + aw * bw;
+  if (cos < 0) { bx = -bx; by = -by; bz = -bz; bw = -bw; cos = -cos; }
+  let s0 = 1 - k, s1 = k;
+  if (cos < 0.9995) {
+    const th = Math.acos(cos), sin = Math.sin(th);
+    s0 = Math.sin((1 - k) * th) / sin;
+    s1 = Math.sin(k * th) / sin;
+  }
+  const q = [s0 * ax + s1 * bx, s0 * ay + s1 * by, s0 * az + s1 * bz, s0 * aw + s1 * bw];
+  const n = Math.hypot(...q) || 1;
+  return q.map((x) => x / n);
+}
+
+export class OrientationLog {
+  constructor(keepMs = 1000) { this.keep = keepMs; this.s = []; }
+  get size() { return this.s.length; }
+  add(t, q) {
+    if (this.s.length && t <= this.s[this.s.length - 1].t) return;     // out of order: ignore
+    this.s.push({ t, q });
+    while (this.s.length > 2 && this.s[0].t < t - this.keep) this.s.shift();
+  }
+  latest() { return this.s.length ? this.s[this.s.length - 1].q : null; }
+  at(t) {
+    const s = this.s;
+    if (!s.length) return null;
+    if (t <= s[0].t) return s[0].q;
+    if (t >= s[s.length - 1].t) return s[s.length - 1].q;
+    let i = s.length - 1;
+    while (i > 0 && s[i - 1].t > t) i--;
+    const a = s[i - 1], b = s[i];
+    return slerp(a.q, b.q, (t - a.t) / Math.max(b.t - a.t, 1e-6));
+  }
+}
+
+// ---------------------------------------------------------------- aiming
+const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+const len = (a) => Math.hypot(a[0], a[1], a[2]);
+
+export function angleBetween(a, b) {
+  return Math.acos(Math.min(1, Math.max(-1, dot(a, b) / Math.max(len(a) * len(b), 1e-9))));
+}
+
+// Which thing the line from the camera through the fingers passes through, judged by how it
+// LOOKS (direction and size), not by a 3D distance: the depth of a hand is only a guess from its
+// size, so a 3D test misses whenever the guess is off. things: [{centre: [x, y, z] camera
+// space, radius}]. Returns the index, or -1. slack > 1 makes the targets a bit bigger than drawn.
+export function pickByRay(dir, things, slack = 1.3) {
+  let best = -1, bestScore = Infinity, bestD = Infinity;
+  things.forEach((t, i) => {
+    const d = len(t.centre);
+    if (t.centre[2] >= 0 || d < 1e-6) return;                     // behind the camera
+    const size = Math.asin(Math.min(1, t.radius / d)) * slack;
+    const score = angleBetween(dir, t.centre) / Math.max(size, 1e-6);
+    if (score < 1 && (score < bestScore - 0.15 || (score < bestScore + 0.15 && d < bestD))) {
+      best = i; bestScore = score; bestD = d;
+    }
+  });
+  return best;
+}
+
+// Where a line from o along d meets the flat surface through p facing n, or null.
+export function rayPlane(o, d, p, n) {
+  const den = dot(d, n);
+  if (Math.abs(den) < 1e-9) return null;
+  const s = dot([p[0] - o[0], p[1] - o[1], p[2] - o[2]], n) / den;
+  return s <= 0 ? null : [o[0] + d[0] * s, o[1] + d[1] * s, o[2] + d[2] * s];
+}
+
+// How far (screen pixels) the camera picture behind one eye is slid sideways so it looks as far
+// away as `depth`: then a hologram at that distance sits on the picture with no double image.
+// f: the eye's focal length in pixels. side: -1 left eye, +1 right eye, 0 one picture.
+export function pictureShift(side, f, ipd, depth) {
+  return side ? (-side * f * (ipd / 2)) / depth : 0;
 }

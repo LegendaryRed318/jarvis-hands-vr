@@ -4,9 +4,13 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="theme-color" content="#04070c">
+<meta name="description" content="Holograms you work with your hands, through your phone's camera, in a cheap VR headset.">
 <title>JARVIS Hands VR</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
 <style>
-  :root { --ice: #c8f5ff; --cyan: #3cd2ff; --gold: #ffd23c; --ground: #04070c; }
+  :root { --ice: #c8f5ff; --cyan: #3cd2ff; --gold: #ffd23c; --ground: #04070c; --line: #1d4456; --mute: #a8d6e6; }
   * { box-sizing: border-box; }
   html, body { margin: 0; height: 100%; background: var(--ground); color: var(--ice);
     font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; overflow: hidden; }
@@ -14,26 +18,35 @@
   #start { position: fixed; inset: 0; overflow-y: auto; padding: 24px 20px 40px; display: flex; flex-direction: column;
     gap: 14px; max-width: 640px; margin: 0 auto; }
   h1 { margin: 6px 0 0; font-size: 28px; letter-spacing: 0.06em; color: var(--cyan); }
-  p { margin: 0; line-height: 1.45; color: #a8d6e6; }
+  p { margin: 0; line-height: 1.45; color: var(--mute); }
   .go { display: flex; gap: 10px; flex-wrap: wrap; }
   button { font: inherit; font-size: 18px; font-weight: 700; padding: 16px 18px; border-radius: 12px; border: 2px solid var(--cyan);
     background: #0b2230; color: var(--ice); flex: 1 1 220px; min-height: 60px; }
   button.main { background: var(--cyan); color: #021018; }
-  button:focus-visible { outline: 3px solid var(--gold); outline-offset: 2px; }
-  details { border: 1px solid #1d4456; border-radius: 10px; padding: 10px 14px; }
+  button.small { font-size: 15px; min-height: 44px; padding: 10px 14px; flex: none; }
+  button:focus-visible, select:focus-visible, input:focus-visible { outline: 3px solid var(--gold); outline-offset: 2px; }
+  #install { border-color: var(--gold); color: var(--gold); }
+  details { border: 1px solid var(--line); border-radius: 10px; padding: 10px 14px; }
   summary { cursor: pointer; font-weight: 700; color: var(--cyan); }
   label { display: grid; grid-template-columns: 1fr auto; gap: 4px 12px; align-items: center; margin-top: 12px; font-size: 15px; }
-  label input[type=range] { grid-column: 1 / -1; width: 100%; }
-  ul { margin: 6px 0 0; padding-left: 20px; line-height: 1.6; color: #a8d6e6; }
+  label input[type=range], label select, label input[type=file] { grid-column: 1 / -1; width: 100%; }
+  select, input[type=file] { font: inherit; font-size: 15px; color: var(--ice); background: #0b2230; border: 1px solid var(--line);
+    border-radius: 8px; padding: 10px; }
+  .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: 8px; }
+  .note { font-size: 14px; }
+  ul { margin: 6px 0 0; padding-left: 20px; line-height: 1.6; color: var(--mute); }
   b { color: var(--ice); }
   #status { min-height: 1.4em; color: var(--gold); font-weight: 600; }
   #exit { position: fixed; top: 10px; right: 10px; display: none; flex: none; min-height: 0; padding: 8px 12px; font-size: 13px;
     opacity: 0.55; background: #0b2230; }
+  #diag { position: fixed; left: 8px; bottom: 6px; display: none; font: 12px/1.3 ui-monospace, Consolas, monospace;
+    color: var(--mute); opacity: 0.7; pointer-events: none; font-variant-numeric: tabular-nums; }
 </style>
 </head>
 <body>
 <canvas id="view" aria-label="Hologram view"></canvas>
 <button id="exit" type="button">EXIT</button>
+<div id="diag" aria-hidden="true"></div>
 <main id="start">
   <h1>JARVIS HANDS VR</h1>
   <p>Holograms you work with your hands, seen through your phone's back camera. Everything runs on this
@@ -42,6 +55,7 @@
     <button id="goHeadset" class="main" type="button">START IN THE HEADSET</button>
     <button id="goPhone" type="button">TRY IT IN MY HAND</button>
   </div>
+  <button id="install" type="button" hidden>INSTALL AS AN APP</button>
   <p id="status" role="status" aria-live="polite"></p>
   <details open>
     <summary>How to use it</summary>
@@ -50,22 +64,43 @@
       <li><b>Pinch</b> a hologram to grab and move it. Pinch empty air and move to <b>spin</b> it.</li>
       <li><b>Two pinches</b> on it: pull apart to resize, twist to turn.</li>
       <li><b>Two open hands</b> spread apart: it comes apart into pieces.</li>
-      <li><b>Hold an open palm still</b> away from the holograms: the <b>menu</b> (next, add, delete, suit up, glove, colour, recentre, exit).</li>
+      <li><b>Hold an open palm still</b> away from the holograms: the <b>menu</b> (next, add, delete, suit up, glove, colour, screen, recentre, exit).</li>
       <li><b>SUIT UP</b>: the gauntlet wraps your hand and moves with it.</li>
+      <li><b>SCREEN</b>: the video you picked below plays on a big screen. Pinch it quickly to play or pause, pinch and move to place it.</li>
       <li>Turn your head: the holograms stay where you put them. <b>RECENTRE</b> brings them back in front.</li>
       <li>Keep a light on and your hands in front of you, not at the edges.</li>
     </ul>
   </details>
   <details>
+    <summary>Make it an app on your phone</summary>
+    <p class="note">Tap <b>INSTALL AS AN APP</b> above if you see it. If not: Chrome menu (the three dots), then
+      <b>Add to home screen</b>, then <b>Install</b>. It then opens full screen from its own icon, with no address bar,
+      and works without internet once it has been opened once.</p>
+  </details>
+  <details>
+    <summary>Watch a video in the headset</summary>
+    <label>A video on this phone <input id="film" type="file" accept="video/*"></label>
+    <p class="note" id="filmName">Pick one before you start. Then, in the headset, open the menu and pick SCREEN.
+      (Videos saved on the phone only: YouTube and Netflix cannot be put inside the headset view.)</p>
+  </details>
+  <details>
     <summary>Settings (for your headset)</summary>
-    <label>Camera width (degrees) <output id="fovOut"></output><input id="fov" type="range" min="50" max="90" step="1"></label>
+    <label>Camera <select id="cam"><option value="">Back camera (normal)</option></select></label>
+    <div class="row"><button id="findCams" class="small" type="button">FIND MY CAMERAS</button>
+      <span class="note" id="camCount"></span></div>
+    <p class="note">The wide (ultra-wide) back camera sees more of your hands: if you pick it, set Camera width to about 100.
+      A USB camera plugged into the phone shows up here too, if the phone allows it.</p>
+    <label>Camera width (degrees) <output id="fovOut"></output><input id="fov" type="range" min="50" max="120" step="1"></label>
     <label>Picture size in each eye <output id="eyeOut"></output><input id="eye" type="range" min="0.6" max="1" step="0.02"></label>
     <label>Gap between the two pictures <output id="gapOut"></output><input id="gap" type="range" min="-0.15" max="0.15" step="0.01"></label>
     <label>3D strength <output id="ipdOut"></output><input id="ipd" type="range" min="0" max="0.06" step="0.005"></label>
   </details>
 </main>
 <script type="importmap">
-{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js" } }
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+} }
 </script>
 <script type="module" src="js/app.js"></script>
 </body>

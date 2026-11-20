@@ -6,6 +6,10 @@
 !models.json
 !package.json
 !README.md
+!manifest.webmanifest
+!sw.js
+!icons/
+!icons/*.png
 !js/
 !js/*.js
 !tests/
